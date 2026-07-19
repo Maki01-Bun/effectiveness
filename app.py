@@ -1,26 +1,31 @@
 from flask import Flask, request, jsonify
-import pandas as pd
 import joblib
+import pandas as pd
 
 app = Flask(__name__)
 
-model = joblib.load("random_forest_subsidy.pkl")
-
-@app.route('/')
-def home():
-    return "AgriSubsidy AI API is running"
+model = joblib.load('random_forest_subsidy.pkl')
 
 @app.route('/predict', methods=['POST'])
 def predict():
 
-    data = request.get_json()
+    data = request.json
 
-    df = pd.DataFrame([data])
+    features = [[
+        data['subsidy_type'],
+        data['farm_size'],
+        data['crop_yield_before'],
+        data['crop_yield_after'],
+        data['income_before'],
+        data['income_after'],
+        data['pest'],
+        data['calamity']
+    ]]
 
-    prediction = model.predict(df)
+    prediction = model.predict(features)
 
     return jsonify({
-        "prediction": prediction[0]
+        'effectiveness': str(prediction[0])
     })
 
 if __name__ == '__main__':
