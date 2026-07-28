@@ -43,16 +43,6 @@ def home():
     return {
         "message": "AgriSubsidy Random Forest API is running."
     }
-
-# ----------------------------
-# Health Check
-# ----------------------------
-@app.get("/health")
-def health():
-    return {
-        "status": "OK"
-    }
-
 # ----------------------------
 # Prediction Endpoint
 # ----------------------------
