@@ -3,27 +3,33 @@ from pydantic import BaseModel
 import joblib
 import pandas as pd
 
-# ----------------------------
-# Create FastAPI app
-# ----------------------------
-app = FastAPI(
-    title="AgriSubsidy Prediction API",
-    version="1.0"
-)
+app = FastAPI()
 
-# ----------------------------
-# Load trained model
-# ----------------------------
 try:
     model = joblib.load("random_forest_subsidy.pkl")
-    print("Model loaded successfully.")
+    MODEL_LOADED = True
 except Exception as e:
-    print("Unable to load model:", e)
+    print(e)
+    MODEL_LOADED = False
     model = None
 
-# ----------------------------
-# Request Schema
-# ----------------------------
+
+@app.get("/")
+def home():
+    return {
+        "status": "running",
+        "model_loaded": MODEL_LOADED
+    }
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "model_loaded": MODEL_LOADED
+    }
+
+
 class PredictionInput(BaseModel):
     subsidy_type: str
     farm_size: float
@@ -35,26 +41,14 @@ class PredictionInput(BaseModel):
     pest: str
     calamity: str
 
-# ----------------------------
-# Home
-# ----------------------------
-@app.get("/")
-def home():
-    return {
-        "message": "AgriSubsidy Random Forest API is running."
-    }
-# ----------------------------
-# Prediction Endpoint
-# ----------------------------
+
 @app.post("/predict")
 def predict(data: PredictionInput):
 
     if model is None:
-        return {
-            "error": "Model not loaded."
-        }
+        return {"error": "Model not loaded"}
 
-    input_data = pd.DataFrame([{
+    df = pd.DataFrame([{
         "Subsidy Type": data.subsidy_type,
         "Farm Size (ha)": data.farm_size,
         "Crop Yield Before": data.crop_yield_before,
@@ -66,8 +60,8 @@ def predict(data: PredictionInput):
         "Calamity": data.calamity
     }])
 
-    prediction = model.predict(input_data)[0]
+    prediction = model.predict(df)[0]
 
     return {
-        "effectiveness": prediction
+        "effectiveness": str(prediction)
     }
