@@ -7,6 +7,7 @@ app = FastAPI()
 
 try:
     model = joblib.load("random_forest_subsidy.pkl")
+    print("Model classes:", model.classes_)
     MODEL_LOADED = True
 except Exception as e:
     print(e)
@@ -44,6 +45,7 @@ class PredictionInput(BaseModel):
 
 @app.post("/predict")
 def predict(data: PredictionInput):
+    
 
     if model is None:
         return {"error": "Model not loaded"}
