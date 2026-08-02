@@ -1,336 +1,202 @@
-import pandas as pd
-import numpy as np
+import random
 import joblib
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sklearn.model_selection import (
-    train_test_split,
-    learning_curve,
-    cross_val_score
-)
-
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestClassifier
-
+from sklearn.feature_selection import SelectFromModel
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
     confusion_matrix,
-    ConfusionMatrixDisplay
+    ConfusionMatrixDisplay,
 )
+from sklearn.model_selection import (
+    RandomizedSearchCV,
+    cross_val_score,
+    learning_curve,
+    train_test_split,
+)
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
 
-# =====================================================
+
+random.seed(42)
+np.random.seed(42)
+
+TRAIN_FILE = "datasets/subsidy_dataset.xlsx"
+VALIDATION_FILE = "datasets/subsidy_validation_datasets.xlsx"
+TARGET = "Effectiveness Label"
+
+
 # LOAD DATASET
-# =====================================================
-
-df = pd.read_excel("datasets/subsidy_dataset.xlsx")
+train_df = pd.read_excel(TRAIN_FILE)
+validation_df = pd.read_excel(VALIDATION_FILE)
 
 print("\n==============================")
-print("DATASET")
+print("TRAINING DATASET")
 print("==============================")
-print("Dataset Shape:", df.shape)
-print(df.head())
+print(train_df.head())
+print("Shape:", train_df.shape)
 
-# =====================================================
 # FEATURES AND TARGET
-# =====================================================
+X = train_df.drop(columns=[TARGET])
+y = train_df[TARGET]
 
-X = df.drop(columns=["Effectiveness Label"])
-y = df["Effectiveness Label"]
+X_validation = validation_df.drop(columns=[TARGET])
+y_validation = validation_df[TARGET]
 
-# =====================================================
-# CATEGORICAL & NUMERICAL FEATURES
-# =====================================================
-
-categorical_cols = [
-    "Subsidy Type",
-    "Pest",
-    "Calamity"
-]
-
+categorical_cols = ["Subsidy Type", "Pest", "Calamity"]
 numerical_cols = [
     "Farm Size (ha)",
     "Crop Yield Before",
     "Crop Yield After",
     "Income Before",
     "Income After",
-    "Feedback Score"
+    "Feedback Score",
 ]
 
-# =====================================================
-# PREPROCESSOR
-# =====================================================
-
-preprocessor = ColumnTransformer(
-    transformers=[
-        (
-            "cat",
-            OneHotEncoder(handle_unknown="ignore"),
-            categorical_cols
-        ),
-        (
-            "num",
-            "passthrough",
-            numerical_cols
-        )
-    ]
-)
-
-# =====================================================
-# RANDOM FOREST (IMPROVED)
-# =====================================================
-
-rf_model = RandomForestClassifier(
-    n_estimators=200,
-    max_depth=10,
-    min_samples_split=5,
-    min_samples_leaf=2,
-    random_state=42
-)
-
-# =====================================================
-# PIPELINE
-# =====================================================
-
-pipeline = Pipeline([
-    ("preprocessor", preprocessor),
-    ("classifier", rf_model)
+preprocessor = ColumnTransformer([
+    ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
+    ("num", "passthrough", numerical_cols),
 ])
 
-# =====================================================
-# TRAIN TEST SPLIT
-# =====================================================
 
+# TRAIN / TEST SPLIT
 X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.20,
-    random_state=42,
-    stratify=y
+    X, y, test_size=0.20, stratify=y, random_state=42
 )
 
-# =====================================================
-# TRAIN MODEL
-# =====================================================
 
-pipeline.fit(X_train, y_train)
+# MODEL + GRID SEARCH
+pipeline = Pipeline([
+    ("preprocessor", preprocessor),
+    ("classifier", RandomForestClassifier(random_state=42, n_jobs=-1))
+])  
+params = {
+    "classifier__n_estimators": [100, 200, 300, 500],
+    "classifier__max_depth": [None, 10, 15, 20, 30],
+    "classifier__min_samples_split": [2, 5, 10],
+    "classifier__min_samples_leaf": [1, 2, 4],
+    "classifier__max_features": ["sqrt", "log2"],
+    "classifier__bootstrap": [True, False],
+}
 
-# =====================================================
-# TRAIN VS TEST ACCURACY
-# =====================================================
-
-train_accuracy = pipeline.score(X_train, y_train)
-test_accuracy = pipeline.score(X_test, y_test)
-
-print("\n==============================")
-print("TRAIN VS TEST ACCURACY")
-print("==============================")
-print(f"Train Accuracy : {train_accuracy * 100:.2f}%")
-print(f"Test Accuracy  : {test_accuracy * 100:.2f}%")
-
-# =====================================================
-# PREDICTIONS
-# =====================================================
-
-y_pred = pipeline.predict(X_test)
-
-# =====================================================
-# ACCURACY
-# =====================================================
-
-accuracy = accuracy_score(y_test, y_pred)
-
-print("\n==============================")
-print("ACCURACY")
-print("==============================")
-print(f"Accuracy: {accuracy * 100:.2f}%")
-
-# =====================================================
-# CLASSIFICATION REPORT
-# =====================================================
-
-print("\n==============================")
-print("CLASSIFICATION REPORT")
-print("==============================")
-print(classification_report(y_test, y_pred))
-
-# =====================================================
-# CONFUSION MATRIX
-# =====================================================
-
-cm = confusion_matrix(y_test, y_pred)
-
-print("\n==============================")
-print("CONFUSION MATRIX")
-print("==============================")
-print(cm)
-
-# =====================================================
-# SAVE CONFUSION MATRIX IMAGE
-# =====================================================
-
-fig_cm, ax_cm = plt.subplots(figsize=(7, 6))
-
-disp = ConfusionMatrixDisplay(
-    confusion_matrix=cm,
-    display_labels=pipeline.classes_
-)
-
-disp.plot(ax=ax_cm)
-
-plt.title("Random Forest Confusion Matrix")
-
-plt.savefig(
-    "confusion_matrix.png",
-    dpi=300,
-    bbox_inches="tight"
-)
-
-plt.close()
-
-# =====================================================
-# LEARNING CURVE
-# =====================================================
-
-train_sizes, train_scores, test_scores = learning_curve(
+search = RandomizedSearchCV(
     pipeline,
-    X,
-    y,
+    param_distributions=params,
+    n_iter=40,
     cv=5,
     scoring="accuracy",
-    train_sizes=np.linspace(0.1, 1.0, 10),
+    random_state=42,
+    n_jobs=-1,
+)
+
+search.fit(X_train, y_train)
+model = search.best_estimator_
+
+print("Best Parameters:", search.best_params_)
+
+
+# TRAIN / TEST EVALUATION
+train_acc = model.score(X_train, y_train)
+test_acc = model.score(X_test, y_test)
+
+print(f"Train Accuracy : {train_acc*100:.2f}%")
+print(f"Test Accuracy  : {test_acc*100:.2f}%")
+
+y_pred = model.predict(X_test)
+
+print(classification_report(y_test, y_pred))
+
+cm = confusion_matrix(y_test, y_pred)
+ConfusionMatrixDisplay(cm, display_labels=model.classes_).plot()
+plt.savefig("confusion_matrix_test.png", dpi=300, bbox_inches="tight")
+plt.close()
+
+
+# CROSS VALIDATION
+cv = cross_val_score(model, X, y, cv=5, scoring="accuracy", n_jobs=-1)
+print("CV Scores:", cv)
+print("CV Mean:", cv.mean())
+
+# LEARNING CURVE
+sizes, train_scores, valid_scores = learning_curve(
+    model, X, y,
+    cv=5,
+    train_sizes=np.linspace(0.1,1.0,10),
     n_jobs=-1
 )
 
-train_mean = train_scores.mean(axis=1)
-test_mean = test_scores.mean(axis=1)
+plt.figure(figsize=(8,5))
+plt.plot(sizes, train_scores.mean(axis=1), marker="o", label="Training")
+plt.plot(sizes, valid_scores.mean(axis=1), marker="o", label="Validation")
+plt.xlabel("Training Samples")
+plt.ylabel("Accuracy")
+plt.grid(True)
+plt.legend()
+plt.savefig("learning_curve.png", dpi=300, bbox_inches="tight")
+plt.close()
 
-# =====================================================
-# CROSS VALIDATION
-# =====================================================
 
-cv_scores = cross_val_score(
-    pipeline,
-    X,
-    y,
-    cv=5,
-    scoring="accuracy"
-)
+# EXTERNAL VALIDATION
+val_pred = model.predict(X_validation)
+val_acc = accuracy_score(y_validation, val_pred)
 
-print("\n==============================")
-print("CROSS VALIDATION")
-print("==============================")
-print("Scores:", cv_scores)
-print(f"Mean Accuracy: {cv_scores.mean()*100:.2f}%")
-print(f"Std Dev: {cv_scores.std()*100:.2f}%")
+print(f"External Validation Accuracy : {val_acc*100:.2f}%")
+print(classification_report(y_validation, val_pred))
 
-# =====================================================
-# TRAINING RESULTS FIGURE
-# =====================================================
+val_cm = confusion_matrix(y_validation, val_pred)
+ConfusionMatrixDisplay(val_cm, display_labels=model.classes_).plot()
+plt.savefig("confusion_matrix_validation.png", dpi=300, bbox_inches="tight")
+plt.close()
 
-fig, axes = plt.subplots(1, 3, figsize=(20, 6))
 
-fig.suptitle(
-    "Random Forest Training Results",
-    fontsize=16,
-    fontweight="bold"
-)
+# FEATURE IMPORTANCE
+feature_names = model.named_steps["preprocessor"].get_feature_names_out()
+feature_importance = model.named_steps["classifier"].feature_importances_
 
-# =====================================================
-# LEARNING CURVE
-# =====================================================
+print("Number of Features:", len(feature_names))
+print("Number of Importances:", len(feature_importance))
 
-axes[0].plot(
-    train_sizes,
-    train_mean,
-    marker='o',
-    linewidth=2,
-    label='Training Accuracy'
-)
+fi = pd.DataFrame({
+    "Feature": feature_names,
+    "Importance": feature_importance
+})
 
-axes[0].plot(
-    train_sizes,
-    test_mean,
-    marker='o',
-    linewidth=2,
-    label='Validation Accuracy'
-)
+fi = fi.sort_values(by="Importance", ascending=False)
 
-axes[0].set_title("Learning Curve")
-axes[0].set_xlabel("Training Samples")
-axes[0].set_ylabel("Accuracy")
-axes[0].set_ylim(0.80, 1.01)
-axes[0].legend()
-axes[0].grid(True)
+fi.to_excel("feature_importance.xlsx", index=False)
 
-# =====================================================
-# CROSS VALIDATION ACCURACY
-# =====================================================
+print("\nTop 10 Most Important Features")
+print(fi.head(10))
 
-folds = [f"Fold {i}" for i in range(1, 6)]
+# METRICS EXPORT
+metrics = pd.DataFrame({
+    "Metric":[
+        "Train Accuracy",
+        "Test Accuracy",
+        "Validation Accuracy",
+        "Cross Validation"
+    ],
+    "Value":[train_acc, test_acc, val_acc, cv.mean()]
+})
 
-bars = axes[1].bar(
-    folds,
-    cv_scores * 100
-)
+metrics.to_excel("training_metrics.xlsx", index=False)
 
-axes[1].set_title("Cross-Validation Accuracy")
-axes[1].set_ylabel("Accuracy (%)")
-axes[1].set_ylim(0, 100)
 
-for bar, score in zip(bars, cv_scores):
-    axes[1].text(
-        bar.get_x() + bar.get_width() / 2,
-        score * 100 + 1,
-        f"{score * 100:.2f}%",
-        ha='center'
-    )
-
-# =====================================================
-# CONFUSION MATRIX
-# =====================================================
-
-disp = ConfusionMatrixDisplay(
-    confusion_matrix=cm,
-    display_labels=pipeline.classes_
-)
-
-disp.plot(
-    ax=axes[2],
-    colorbar=False
-)
-
-axes[2].set_title("Confusion Matrix")
-
-# =====================================================
-# SAVE FIGURE
-# =====================================================
-
-plt.tight_layout()
-
-plt.savefig(
-    "training_results.png",
-    dpi=300,
-    bbox_inches="tight"
-)
-
-plt.show()
-
-# =====================================================
 # SAVE MODEL
-# =====================================================
+joblib.dump(model, "random_forest_subsidy.pkl")
 
-joblib.dump(
-    pipeline,
-    "random_forest_subsidy.pkl"
-)
-
-print("\n==============================")
-print("FILES GENERATED")
-print("==============================")
-print("✓ random_forest_subsidy.pkl")
-print("✓ confusion_matrix.png")
-print("✓ training_results.png")
-print("==============================")
+print("\nTraining Complete!")
+print("Generated Files:")
+print("- random_forest_subsidy.pkl")
+print("- confusion_matrix_test.png")
+print("- confusion_matrix_validation.png")  
+print("- learning_curve.png")
+print("- feature_importance.xlsx")
+print("- training_metrics.xlsx")
