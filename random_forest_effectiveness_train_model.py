@@ -55,8 +55,6 @@ numerical_cols = [
     "Farm Size (ha)",
     "Crop Yield Before",
     "Crop Yield After",
-    "Income Before",
-    "Income After",
     "Feedback Score",
 ]
 
