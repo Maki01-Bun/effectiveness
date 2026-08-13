@@ -42,8 +42,8 @@ np.random.seed(42)
 # FILE SETTINGS
 # ============================================================
 
-TRAIN_FILE = "datasets/subsidy_dataset.xlsx"
-VALIDATION_FILE = "datasets/subsidy_validation_datasets.xlsx"
+TRAIN_FILE = "datasets/subsidy_dataset2.xlsx"
+VALIDATION_FILE = "datasets/subsidy_validation_datasets2.xlsx"
 
 TARGET = "Effectiveness Label"
 
@@ -126,13 +126,14 @@ y_validation = validation_df[TARGET]
 categorical_cols = [
     "Subsidy Type",
     "Pest",
-    "Calamity"
+    "Calamity",
+    "Outcome Cause"
 ]
 
 numerical_cols = [
     "Farm Size (ha)",
-    "Crop Yield Before",
-    "Crop Yield After",
+    "Crop Yield Before (tons)",
+    "Crop Yield After (tons)",
     "Feedback Score"
 ]
 
