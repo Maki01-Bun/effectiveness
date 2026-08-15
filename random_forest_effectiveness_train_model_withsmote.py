@@ -127,7 +127,6 @@ categorical_cols = [
     "Subsidy Type",
     "Pest",
     "Calamity",
-    "Outcome Cause"
 ]
 
 numerical_cols = [

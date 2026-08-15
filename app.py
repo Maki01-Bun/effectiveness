@@ -36,8 +36,6 @@ class PredictionInput(BaseModel):
     farm_size: float
     crop_yield_before: float
     crop_yield_after: float
-    income_before: float
-    income_after: float
     feedback_score: float
     pest: str
     calamity: str
@@ -55,8 +53,6 @@ def predict(data: PredictionInput):
         "Farm Size (ha)": data.farm_size,
         "Crop Yield Before": data.crop_yield_before,
         "Crop Yield After": data.crop_yield_after,
-        "Income Before": data.income_before,
-        "Income After": data.income_after,
         "Feedback Score": data.feedback_score,
         "Pest": data.pest,
         "Calamity": data.calamity
