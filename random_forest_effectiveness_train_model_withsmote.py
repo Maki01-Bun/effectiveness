@@ -131,7 +131,7 @@ categorical_cols = [
 
 numerical_cols = [
     "Farm Size (ha)",
-    "Crop Yield Before (tons)",
+    "Average Yield Before (tons)",
     "Crop Yield After (tons)",
     "Feedback Score"
 ]

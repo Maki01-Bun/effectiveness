@@ -53,7 +53,7 @@ y_validation = validation_df[TARGET]
 categorical_cols = ["Subsidy Type", "Pest", "Calamity"]
 numerical_cols = [
     "Farm Size (ha)",
-    "Crop Yield Before",
+    "Average Yield Before",
     "Crop Yield After",
     "Feedback Score",
 ]
