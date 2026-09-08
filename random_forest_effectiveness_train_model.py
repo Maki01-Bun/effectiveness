@@ -50,11 +50,11 @@ y = train_df[TARGET]
 X_validation = validation_df.drop(columns=[TARGET])
 y_validation = validation_df[TARGET]
 
-categorical_cols = ["Subsidy Type", "Pest", "Calamity"]
+categorical_cols = ["Subsidy Type", "Subsidy Received"]
 numerical_cols = [
     "Farm Size (ha)",
-    "Crop Yield Before",
-    "Crop Yield After",
+    "Average Yield (bags/ha)",
+    "Crop Yield(bags/ha)",
     "Feedback Score",
 ]
 
