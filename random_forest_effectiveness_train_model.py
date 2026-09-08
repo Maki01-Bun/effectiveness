@@ -28,14 +28,14 @@ from sklearn.preprocessing import OneHotEncoder
 random.seed(42)
 np.random.seed(42)
 
-TRAIN_FILE = "datasets/subsidy_dataset.xlsx"
-VALIDATION_FILE = "datasets/subsidy_validation_datasets.xlsx"
+TRAIN_FILE = "datasets/subsidy_dataset2_initial.xlsx"
+# VALIDATION_FILE = "datasets/subsidy_validation_datasets.xlsx"
 TARGET = "Effectiveness Label"
 
 
 # LOAD DATASET
 train_df = pd.read_excel(TRAIN_FILE)
-validation_df = pd.read_excel(VALIDATION_FILE)
+# validation_df = pd.read_excel(VALIDATION_FILE)
 
 print("\n==============================")
 print("TRAINING DATASET")
@@ -47,14 +47,15 @@ print("Shape:", train_df.shape)
 X = train_df.drop(columns=[TARGET])
 y = train_df[TARGET]
 
-X_validation = validation_df.drop(columns=[TARGET])
-y_validation = validation_df[TARGET]
+# X_validation = validation_df.drop(columns=[TARGET])
+# y_validation = validation_df[TARGET]
 
-categorical_cols = ["Subsidy Type", "Subsidy Received"]
+categorical_cols = ["Subsidy Received"]
 numerical_cols = [
     "Farm Size (ha)",
     "Average Yield (bags/ha)",
-    "Crop Yield(bags/ha)",
+    "Crop Yield (bags/ha)",
+    "Average Selling Price (₱/kg)",
     "Feedback Score",
 ]
 
@@ -141,17 +142,17 @@ plt.savefig("learning_curve.png", dpi=300, bbox_inches="tight")
 plt.close()
 
 
-# EXTERNAL VALIDATION
-val_pred = model.predict(X_validation)
-val_acc = accuracy_score(y_validation, val_pred)
+# # EXTERNAL VALIDATION
+# val_pred = model.predict(X_validation)
+# val_acc = accuracy_score(y_validation, val_pred)
 
-print(f"External Validation Accuracy : {val_acc*100:.2f}%")
-print(classification_report(y_validation, val_pred))
+# print(f"External Validation Accuracy : {val_acc*100:.2f}%")
+# print(classification_report(y_validation, val_pred))
 
-val_cm = confusion_matrix(y_validation, val_pred)
-ConfusionMatrixDisplay(val_cm, display_labels=model.classes_).plot()
-plt.savefig("confusion_matrix_validation.png", dpi=300, bbox_inches="tight")
-plt.close()
+# val_cm = confusion_matrix(y_validation, val_pred)
+# ConfusionMatrixDisplay(val_cm, display_labels=model.classes_).plot()
+# plt.savefig("confusion_matrix_validation.png", dpi=300, bbox_inches="tight")
+# plt.close()
 
 
 # FEATURE IMPORTANCE
@@ -178,10 +179,9 @@ metrics = pd.DataFrame({
     "Metric":[
         "Train Accuracy",
         "Test Accuracy",
-        "Validation Accuracy",
         "Cross Validation"
     ],
-    "Value":[train_acc, test_acc, val_acc, cv.mean()]
+    "Value":[train_acc, test_acc, cv.mean()]
 })
 
 metrics.to_excel("training_metrics.xlsx", index=False)

@@ -32,13 +32,12 @@ def health():
 
 
 class PredictionInput(BaseModel):
-    subsidy_type: str
     farm_size: float
-    crop_yield_before: float
+    average_yield: float
     crop_yield_after: float
+    selling_price: float
+    subsidy_received: str
     feedback_score: float
-    pest: str
-    calamity: str
 
 
 @app.post("/predict")
@@ -49,13 +48,12 @@ def predict(data: PredictionInput):
         return {"error": "Model not loaded"}
 
     df = pd.DataFrame([{
-        "Subsidy Type": data.subsidy_type,
         "Farm Size (ha)": data.farm_size,
-        "Crop Yield Before": data.crop_yield_before,
-        "Crop Yield After": data.crop_yield_after,
+        "Average Yield (bags/ha)": data.average_yield,
+        "Crop Yield (bags/ha)": data.crop_yield_after,
+        "Average Selling Price (₱/kg)": data.selling_price,
+        "Subsidy Received": data.subsidy_received,  
         "Feedback Score": data.feedback_score,
-        "Pest": data.pest,
-        "Calamity": data.calamity
     }])
 
     prediction = model.predict(df)[0]
