@@ -1,4 +1,12 @@
+# ============================================================
+# AGRISUBSIDY EFFECTIVENESS PREDICTION
+# RANDOM FOREST + SMOTE
+# ============================================================
+
+import os
 import random
+import warnings
+
 import joblib
 import numpy as np
 import pandas as pd
@@ -8,10 +16,20 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 
-from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import (
+    train_test_split,
+    RandomizedSearchCV,
+    StratifiedKFold,
+    cross_val_score,
+    learning_curve
+)
+
 from sklearn.metrics import (
     accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
     classification_report,
     confusion_matrix,
     ConfusionMatrixDisplay,
@@ -19,34 +37,37 @@ from sklearn.metrics import (
     mean_squared_error,
     r2_score
 )
-from sklearn.model_selection import (
-    RandomizedSearchCV,
-    cross_val_score,
-    learning_curve,
-    train_test_split
-)
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
+
+from imblearn.pipeline import Pipeline
+from imblearn.over_sampling import SMOTE
 
 
 # ============================================================
-# RANDOM SEEDS
+# SETTINGS
 # ============================================================
 
 random.seed(42)
 np.random.seed(42)
 
+warnings.filterwarnings("ignore")
 
-# ============================================================
-# FILE AND TARGET SETTINGS
-# ============================================================
+TRAIN_FILE = "datasets/subsidy_dataset_updated.xlsx"
+SHEET_NAME = "Balanced Dataset"
 
-TRAIN_FILE = "datasets/subsidy_dataset2_initial.xlsx"
 TARGET = "Effectiveness Label"
 
+MODEL_FILE = "random_forest_subsidy.pkl"
+
+CONFUSION_MATRIX_FILE = "confusion_matrix_test.png"
+LEARNING_CURVE_FILE = "learning_curve.png"
+FEATURE_IMPORTANCE_FILE = "feature_importance.xlsx"
+TRAINING_METRICS_FILE = "training_metrics.xlsx"
+
+RANDOM_STATE = 42
+
 
 # ============================================================
-# EFFECTIVENESS LABELS
+# LABEL NAMES
 # ============================================================
 
 LABEL_NAMES = {
@@ -57,313 +78,402 @@ LABEL_NAMES = {
 
 
 # ============================================================
-# LOAD DATASET
+# HELPER FUNCTION
 # ============================================================
 
-train_df = pd.read_excel(TRAIN_FILE)
-
-print("\n==============================")
-print("TRAINING DATASET")
-print("==============================")
-
-print(train_df.head())
-print("\nDataset Shape:", train_df.shape)
+def print_section(title):
+    print("\n")
+    print("=" * 70)
+    print(title)
+    print("=" * 70)
 
 
 # ============================================================
-# DATASET INFORMATION
+# 1. LOAD DATASET
 # ============================================================
 
-print("\n==============================")
-print("DATASET INFORMATION")
-print("==============================")
+print_section("1. LOADING DATASET")
 
-print(train_df.info())
+if not os.path.exists(TRAIN_FILE):
+    raise FileNotFoundError(
+        f"Dataset not found:\n{TRAIN_FILE}\n\n"
+        "Make sure the Excel file is inside the datasets folder."
+    )
 
-print("\nMissing Values:")
-print(train_df.isnull().sum())
-
-
-# ============================================================
-# CHECK AND NORMALIZE EFFECTIVENESS LABELS
-# ============================================================
-
-print("\n==============================")
-print("EFFECTIVENESS LABELS")
-print("==============================")
-
-print("0 = Not Effective")
-print("1 = Moderately Effective")
-print("2 = Effective")
-
-print("\nOriginal Target Values:")
-print(train_df[TARGET].value_counts(dropna=False))
-
-
-# ------------------------------------------------------------
-# CONVERT TARGET TO NUMERIC
-# ------------------------------------------------------------
-
-def normalize_effectiveness_label(value):
-
-    if pd.isna(value):
-        return np.nan
-
-    # Already numeric
-    if isinstance(value, (int, np.integer)):
-        value = int(value)
-
-        if value in [0, 1, 2]:
-            return value
-
-    if isinstance(value, (float, np.floating)):
-        if value in [0.0, 1.0, 2.0]:
-            return int(value)
-
-    # String values
-    value = str(value).strip().lower()
-
-    label_mapping = {
-
-        "0": 0,
-        "not effective": 0,
-
-        "1": 1,
-        "moderately effective": 1,
-
-        "2": 2,
-        "effective": 2
-    }
-
-    return label_mapping.get(value, np.nan)
-
-
-train_df[TARGET] = (
-    train_df[TARGET]
-    .apply(normalize_effectiveness_label)
+df = pd.read_excel(
+    TRAIN_FILE,
+    sheet_name=SHEET_NAME
 )
 
+print(f"Dataset loaded successfully.")
+print(f"File: {TRAIN_FILE}")
+print(f"Sheet: {SHEET_NAME}")
+print(f"Rows: {df.shape[0]}")
+print(f"Columns: {df.shape[1]}")
 
-# ------------------------------------------------------------
-# CHECK FOR INVALID LABELS
-# ------------------------------------------------------------
+print("\nColumns:")
+for column in df.columns:
+    print(f" - {column}")
 
-invalid_labels = train_df[TARGET].isna().sum()
 
-if invalid_labels > 0:
+# ============================================================
+# 2. BASIC DATA VALIDATION
+# ============================================================
 
-    print(
-        f"\nWARNING: {invalid_labels} invalid/missing "
-        f"effectiveness labels found."
+print_section("2. DATA VALIDATION")
+
+if TARGET not in df.columns:
+    raise ValueError(
+        f"Target column '{TARGET}' was not found in the dataset."
     )
 
-    print(
-        "\nRows with invalid labels:"
-    )
+print("\nMissing values:")
+print(df.isnull().sum())
 
-    print(
-        train_df[
-            train_df[TARGET].isna()
-        ]
-    )
-
-    # Remove invalid target rows
-    train_df = train_df.dropna(
-        subset=[TARGET]
+if df.isnull().sum().sum() > 0:
+    raise ValueError(
+        "The dataset contains missing values. "
+        "Please clean the dataset before training."
     )
 
 
-# Convert to integer
-train_df[TARGET] = (
-    train_df[TARGET]
-    .astype(int)
+# ============================================================
+# 3. VALIDATE TARGET
+# ============================================================
+
+print_section("3. TARGET VALIDATION")
+
+if not pd.api.types.is_numeric_dtype(df[TARGET]):
+    raise TypeError(
+        f"Target column '{TARGET}' must already be numerical.\n"
+        "Expected values: 0, 1, 2."
+    )
+
+unique_target_values = sorted(
+    df[TARGET].dropna().unique().tolist()
 )
 
+print("Existing target values:")
+print(unique_target_values)
 
-# ------------------------------------------------------------
-# TARGET DISTRIBUTION
-# ------------------------------------------------------------
+expected_labels = {0, 1, 2}
 
-print("\nNormalized Target Distribution:")
+if set(unique_target_values) != expected_labels:
+    raise ValueError(
+        "The target column must contain exactly the numerical classes "
+        "0, 1, and 2.\n\n"
+        f"Found: {unique_target_values}\n"
+        f"Expected: {sorted(expected_labels)}"
+    )
 
-print(
-    train_df[TARGET]
+df[TARGET] = df[TARGET].astype(int)
+
+print("\nTarget labels:")
+for value, name in LABEL_NAMES.items():
+    count = (df[TARGET] == value).sum()
+    print(f"{value} = {name}: {count}")
+
+
+# ============================================================
+# 4. CHECK TARGET BALANCE
+# ============================================================
+
+print_section("4. ORIGINAL DATASET CLASS DISTRIBUTION")
+
+target_distribution = (
+    df[TARGET]
     .value_counts()
     .sort_index()
 )
 
+target_distribution_display = pd.DataFrame({
+    "Class": [
+        LABEL_NAMES[value]
+        for value in target_distribution.index
+    ],
+    "Encoded Value": target_distribution.index,
+    "Count": target_distribution.values,
+    "Percentage": (
+        target_distribution.values /
+        len(df) * 100
+    ).round(2)
+})
 
-# ------------------------------------------------------------
-# VERIFY ALL THREE CLASSES
-# ------------------------------------------------------------
+print(target_distribution_display.to_string(index=False))
 
-required_classes = {0, 1, 2}
 
-actual_classes = set(
-    train_df[TARGET].unique()
-)
+# ============================================================
+# 5. PREPARE FEATURES
+# ============================================================
 
-missing_classes = (
-    required_classes - actual_classes
-)
+print_section("5. PREPARING FEATURES")
 
-if missing_classes:
+X = df.drop(columns=[TARGET]).copy()
+y = df[TARGET].copy()
 
-    raise ValueError(
-        f"\nERROR: Missing effectiveness classes: "
-        f"{sorted(missing_classes)}\n"
-        f"The dataset must contain all three classes:\n"
-        f"0 = Not Effective\n"
-        f"1 = Moderately Effective\n"
-        f"2 = Effective"
+print("Initial features:")
+for column in X.columns:
+    print(f" - {column}")
+
+
+# ============================================================
+# 6. VERIFY ALL FEATURES ARE NUMERICAL
+# ============================================================
+
+print_section("6. FEATURE TYPE VALIDATION")
+
+non_numeric_columns = X.select_dtypes(
+    exclude=[np.number]
+).columns.tolist()
+
+if non_numeric_columns:
+    raise TypeError(
+        "The following feature columns are not numerical:\n"
+        + "\n".join(
+            f" - {column}"
+            for column in non_numeric_columns
+        )
+        + "\n\nThe updated dataset should contain only numerical values."
     )
 
-
-# ============================================================
-# FEATURES AND TARGET
-# ============================================================
-
-X = train_df.drop(
-    columns=[TARGET]
-)
-
-y = train_df[TARGET]
+print("All feature columns are numerical.")
 
 
 # ============================================================
-# COLUMN TYPES
+# 7. REMOVE CONSTANT FEATURES
 # ============================================================
 
-categorical_cols = [
-    "Subsidy Received"
+print_section("7. CONSTANT FEATURE CHECK")
+
+constant_columns = [
+    column
+    for column in X.columns
+    if X[column].nunique(dropna=False) <= 1
 ]
 
-numerical_cols = [
-    "Farm Size (ha)",
-    "Average Yield (bags/ha)",
-    "Crop Yield (bags/ha)",
-    "Average Selling Price (₱/kg)",
-    "Feedback Score"
-]
+if constant_columns:
 
+    print("Constant features detected:")
 
-# ============================================================
-# PREPROCESSING
-# ============================================================
-
-preprocessor = ColumnTransformer(
-    transformers=[
-        (
-            "cat",
-            OneHotEncoder(
-                handle_unknown="ignore"
-            ),
-            categorical_cols
-        ),
-
-        (
-            "num",
-            "passthrough",
-            numerical_cols
+    for column in constant_columns:
+        print(
+            f" - {column}: "
+            f"{X[column].iloc[0]}"
         )
-    ]
-)
+
+    X = X.drop(
+        columns=constant_columns
+    )
+
+    print("\nConstant features removed.")
+
+else:
+
+    print("No constant features detected.")
+
+
+print("\nFinal features used for training:")
+
+for column in X.columns:
+    print(f" - {column}")
+
+print(f"\nNumber of final features: {X.shape[1]}")
 
 
 # ============================================================
-# TRAIN / TEST SPLIT
+# 8. TRAIN / TEST SPLIT
 # ============================================================
+
+print_section("8. TRAIN / TEST SPLIT")
 
 X_train, X_test, y_train, y_test = train_test_split(
     X,
     y,
     test_size=0.20,
-    stratify=y,
-    random_state=42
+    random_state=RANDOM_STATE,
+    stratify=y
 )
 
+print(f"Training samples: {len(X_train)}")
+print(f"Testing samples: {len(X_test)}")
 
-print("\n==============================")
-print("TRAIN / TEST SPLIT")
-print("==============================")
+print("\nTraining class distribution BEFORE SMOTE:")
 
-print(
-    "Training samples:",
-    len(X_train)
+train_distribution = (
+    y_train
+    .value_counts()
+    .sort_index()
 )
 
-print(
-    "Testing samples:",
-    len(X_test)
+for label, count in train_distribution.items():
+
+    print(
+        f"{label} - "
+        f"{LABEL_NAMES[label]}: "
+        f"{count}"
+    )
+
+print("\nTesting class distribution:")
+
+test_distribution = (
+    y_test
+    .value_counts()
+    .sort_index()
 )
+
+for label, count in test_distribution.items():
+
+    print(
+        f"{label} - "
+        f"{LABEL_NAMES[label]}: "
+        f"{count}"
+    )
 
 
 # ============================================================
-# RANDOM FOREST CLASSIFIER
-# ANTI-OVERFITTING SETTINGS
+# 9. SMOTE CHECK
 # ============================================================
+
+print_section("9. SMOTE BALANCING CHECK")
+
+smote_check = SMOTE(
+    random_state=RANDOM_STATE
+)
+
+X_train_smote_check, y_train_smote_check = (
+    smote_check.fit_resample(
+        X_train,
+        y_train
+    )
+)
+
+before_smote = (
+    y_train
+    .value_counts()
+    .sort_index()
+)
+
+after_smote = (
+    pd.Series(y_train_smote_check)
+    .value_counts()
+    .sort_index()
+)
+
+smote_distribution = pd.DataFrame({
+    "Class": [
+        LABEL_NAMES[label]
+        for label in before_smote.index
+    ],
+    "Encoded Value": before_smote.index,
+    "Before SMOTE": before_smote.values,
+    "After SMOTE": [
+        after_smote.get(
+            label,
+            0
+        )
+        for label in before_smote.index
+    ]
+})
+
+print(
+    smote_distribution.to_string(
+        index=False
+    )
+)
+
+if (
+    before_smote.values == after_smote.values
+).all():
+
+    print(
+        "\nThe training data is already balanced."
+    )
+
+    print(
+        "SMOTE did not need to create additional samples."
+    )
+
+else:
+
+    print(
+        "\nSMOTE created synthetic samples "
+        "for the minority classes."
+    )
+
+
+# ============================================================
+# 10. BUILD SMOTE + RANDOM FOREST PIPELINE
+# ============================================================
+
+print_section("10. BUILDING SMOTE + RANDOM FOREST PIPELINE")
 
 pipeline = Pipeline([
     (
-        "preprocessor",
-        preprocessor
+        "smote",
+        SMOTE(
+            random_state=RANDOM_STATE
+        )
     ),
 
     (
         "classifier",
         RandomForestClassifier(
-            random_state=42,
+            random_state=RANDOM_STATE,
             n_jobs=-1
         )
     )
 ])
 
+print("Pipeline created:")
+print("1. SMOTE")
+print("2. Random Forest Classifier")
+
 
 # ============================================================
-# HYPERPARAMETER SEARCH
+# 11. HYPERPARAMETER SEARCH
 # ============================================================
 
-params = {
+print_section("11. RANDOM FOREST HYPERPARAMETER SEARCH")
 
-    # Number of trees
+param_distributions = {
+
     "classifier__n_estimators": [
         100,
         200,
-        300
+        300,
+        400
     ],
 
-    # Limit tree complexity
     "classifier__max_depth": [
         5,
         8,
         10,
         12,
-        15
+        15,
+        None
     ],
 
-    # Require more samples before splitting
     "classifier__min_samples_split": [
+        2,
         5,
         10,
         15,
         20
     ],
 
-    # Require more samples in leaf nodes
     "classifier__min_samples_leaf": [
+        1,
         2,
         4,
         6,
         8
     ],
 
-    # Number of features considered at each split
     "classifier__max_features": [
         "sqrt",
         "log2"
     ],
 
-    # Bootstrap sampling
     "classifier__bootstrap": [
         True
     ]
@@ -371,154 +481,160 @@ params = {
 
 
 # ============================================================
-# RANDOMIZED SEARCH
+# 12. CROSS-VALIDATION CONFIGURATION
 # ============================================================
 
-print("\n==============================")
-print("HYPERPARAMETER TUNING")
-print("==============================")
+cv_strategy = StratifiedKFold(
+    n_splits=5,
+    shuffle=True,
+    random_state=RANDOM_STATE
+)
 
-search = RandomizedSearchCV(
-
+random_search = RandomizedSearchCV(
     estimator=pipeline,
-
-    param_distributions=params,
-
+    param_distributions=param_distributions,
     n_iter=40,
-
-    cv=5,
-
-    scoring="accuracy",
-
-    random_state=42,
-
+    scoring="f1_weighted",
+    cv=cv_strategy,
+    verbose=2,
+    random_state=RANDOM_STATE,
     n_jobs=-1,
-
-    verbose=1
+    return_train_score=True
 )
 
 
 # ============================================================
-# TRAIN MODEL
+# 13. TRAIN MODEL
 # ============================================================
 
-print("\n==============================")
-print("TRAINING RANDOM FOREST")
-print("==============================")
+print_section("12. TRAINING RANDOM FOREST WITH SMOTE")
 
-search.fit(
+print(
+    "RandomizedSearchCV is now training the model..."
+)
+
+random_search.fit(
     X_train,
     y_train
 )
 
-
-# Best model
-model = search.best_estimator_
+print("\nTraining completed.")
 
 
 # ============================================================
-# BEST PARAMETERS
+# 14. BEST MODEL
 # ============================================================
 
-print("\n==============================")
-print("BEST PARAMETERS")
-print("==============================")
+print_section("13. BEST MODEL")
+
+best_model = random_search.best_estimator_
+
+print("Best parameters:")
+
+for parameter, value in (
+    random_search.best_params_.items()
+):
+
+    print(
+        f"{parameter}: {value}"
+    )
 
 print(
-    search.best_params_
+    f"\nBest CV F1 Score: "
+    f"{random_search.best_score_:.4f}"
 )
 
 
 # ============================================================
-# CLASSIFICATION EVALUATION
+# 15. TEST PREDICTIONS
 # ============================================================
 
-print("\n==============================")
-print("CLASSIFICATION EVALUATION")
-print("==============================")
+print_section("14. TEST SET PREDICTIONS")
 
-
-# Training predictions
-y_train_pred = model.predict(
-    X_train
-)
-
-
-# Testing predictions
-y_pred = model.predict(
+y_pred = best_model.predict(
     X_test
 )
 
-
-# Training accuracy
-train_acc = accuracy_score(
-    y_train,
-    y_train_pred
-)
+print("Predictions generated successfully.")
 
 
-# Testing accuracy
-test_acc = accuracy_score(
+# ============================================================
+# 16. CLASSIFICATION METRICS
+# ============================================================
+
+print_section("15. CLASSIFICATION METRICS")
+
+accuracy = accuracy_score(
     y_test,
     y_pred
 )
 
+precision = precision_score(
+    y_test,
+    y_pred,
+    average="weighted",
+    zero_division=0
+)
 
-print(
-    f"Train Accuracy : {train_acc * 100:.2f}%"
+recall = recall_score(
+    y_test,
+    y_pred,
+    average="weighted",
+    zero_division=0
+)
+
+f1 = f1_score(
+    y_test,
+    y_pred,
+    average="weighted",
+    zero_division=0
 )
 
 print(
-    f"Test Accuracy  : {test_acc * 100:.2f}%"
+    f"Accuracy : {accuracy:.4f}"
 )
-
-
-# ============================================================
-# OVERFITTING GAP
-# ============================================================
-
-overfit_gap = (
-    train_acc - test_acc
-)
-
 
 print(
-    f"Train-Test Gap : {overfit_gap * 100:.2f} percentage points"
+    f"Precision: {precision:.4f}"
 )
-
-
-# ============================================================
-# CLASSIFICATION REPORT
-# ============================================================
-
-print("\n==============================")
-print("CLASSIFICATION REPORT")
-print("==============================")
-
 
 print(
-    classification_report(
-        y_test,
-        y_pred,
-        labels=[0, 1, 2],
-        target_names=[
-            "Not Effective",
-            "Moderately Effective",
-            "Effective"
-        ],
-        digits=4
-    )
+    f"Recall   : {recall:.4f}"
+)
+
+print(
+    f"F1 Score : {f1:.4f}"
 )
 
 
 # ============================================================
-# CONFUSION MATRIX
+# 17. CLASSIFICATION REPORT
 # ============================================================
 
-print("\n==============================")
-print("CONFUSION MATRIX")
-print("==============================")
+print_section("16. CLASSIFICATION REPORT")
 
+classification_report_text = classification_report(
+    y_test,
+    y_pred,
+    labels=[0, 1, 2],
+    target_names=[
+        LABEL_NAMES[0],
+        LABEL_NAMES[1],
+        LABEL_NAMES[2]
+    ],
+    zero_division=0
+)
+
+print(
+    classification_report_text
+)
+
+
+# ============================================================
+# 18. CONFUSION MATRIX
+# ============================================================
+
+print_section("17. CONFUSION MATRIX")
 
 cm = confusion_matrix(
     y_test,
@@ -526,647 +642,518 @@ cm = confusion_matrix(
     labels=[0, 1, 2]
 )
 
-
 print(cm)
 
+fig, ax = plt.subplots(
+    figsize=(8, 6)
+)
 
-disp = ConfusionMatrixDisplay(
+display = ConfusionMatrixDisplay(
     confusion_matrix=cm,
     display_labels=[
-        "Not Effective",
-        "Moderately Effective",
-        "Effective"
+        LABEL_NAMES[0],
+        LABEL_NAMES[1],
+        LABEL_NAMES[2]
     ]
 )
 
-
-disp.plot()
-
-
-plt.title(
-    "Random Forest - Effectiveness Label"
+display.plot(
+    ax=ax,
+    values_format="d"
 )
 
+ax.set_title(
+    "Random Forest Confusion Matrix"
+)
+
+plt.tight_layout()
 
 plt.savefig(
-    "confusion_matrix_test.png",
+    CONFUSION_MATRIX_FILE,
     dpi=300,
     bbox_inches="tight"
 )
 
-
 plt.close()
 
-
-# ============================================================
-# PRECISION, RECALL, F1
-# ============================================================
-
-report = classification_report(
-    y_test,
-    y_pred,
-    labels=[0, 1, 2],
-    target_names=[
-        "Not Effective",
-        "Moderately Effective",
-        "Effective"
-    ],
-    output_dict=True
-)
-
-
-print("\n==============================")
-print("CLASSIFICATION METRICS")
-print("==============================")
-
-
 print(
-    f"Accuracy : {report['accuracy']:.4f}"
-)
-
-print(
-    f"Precision: {report['weighted avg']['precision']:.4f}"
-)
-
-print(
-    f"Recall   : {report['weighted avg']['recall']:.4f}"
-)
-
-print(
-    f"F1-Score : {report['weighted avg']['f1-score']:.4f}"
+    f"Confusion matrix saved to: "
+    f"{CONFUSION_MATRIX_FILE}"
 )
 
 
 # ============================================================
-# SPECIFICITY
+# 19. MAE / MSE / RMSE / R²
 # ============================================================
 
-print("\n==============================")
-print("SPECIFICITY")
-print("==============================")
-
-
-specificity_values = []
-
-
-for i in range(len(cm)):
-
-    true_negative = (
-        cm.sum()
-        - cm[i, :].sum()
-        - cm[:, i].sum()
-        + cm[i, i]
-    )
-
-    false_positive = (
-        cm[:, i].sum()
-        - cm[i, i]
-    )
-
-    specificity = (
-        true_negative
-        / (true_negative + false_positive)
-        if (true_negative + false_positive) > 0
-        else 0
-    )
-
-    specificity_values.append(
-        specificity
-    )
-
-    print(
-        f"{LABEL_NAMES[i]} Specificity: "
-        f"{specificity:.4f}"
-    )
-
-
-weighted_specificity = np.mean(
-    specificity_values
-)
-
-
-print(
-    f"\nAverage Specificity: "
-    f"{weighted_specificity:.4f}"
-)
-
-
-# ============================================================
-# REGRESSION-STYLE EVALUATION
-# ============================================================
-
-print("\n==============================")
-print("REGRESSION-STYLE EVALUATION")
-print("==============================")
-
-
-print("\nEffectiveness Label Encoding:")
-
-print("0 = Not Effective")
-print("1 = Moderately Effective")
-print("2 = Effective")
-
-
-# ------------------------------------------------------------
-# MAE
-# ------------------------------------------------------------
+print_section("18. ERROR METRICS")
 
 mae = mean_absolute_error(
     y_test,
     y_pred
 )
 
-
-# ------------------------------------------------------------
-# MSE
-# ------------------------------------------------------------
-
 mse = mean_squared_error(
     y_test,
     y_pred
 )
 
-
-# ------------------------------------------------------------
-# RMSE
-# ------------------------------------------------------------
-
 rmse = np.sqrt(
     mse
 )
-
-
-# ------------------------------------------------------------
-# R2
-# ------------------------------------------------------------
 
 r2 = r2_score(
     y_test,
     y_pred
 )
 
-
-print("\nRegression Metrics:")
-
 print(
-    f"MAE  : {mae:.4f}"
+    f"MAE : {mae:.4f}"
 )
 
 print(
-    f"MSE  : {mse:.4f}"
+    f"MSE : {mse:.4f}"
 )
 
 print(
-    f"RMSE : {rmse:.4f}"
+    f"RMSE: {rmse:.4f}"
 )
 
 print(
-    f"R²   : {r2:.4f}"
+    f"R²  : {r2:.4f}"
 )
 
 
 # ============================================================
-# REGRESSION INTERPRETATION
+# 20. ACTUAL VS PREDICTED TABLE
 # ============================================================
 
-print("\n==============================")
-print("REGRESSION INTERPRETATION")
-print("==============================")
+print_section("19. ACTUAL VS PREDICTED")
 
+results_df = pd.DataFrame({
+    "Actual": y_test.values,
+    "Predicted": y_pred
+})
 
-print(
-    f"\nMAE Interpretation:"
+results_df["Error"] = (
+    results_df["Predicted"]
+    - results_df["Actual"]
+)
+
+results_df["Absolute Error"] = (
+    results_df["Error"]
+    .abs()
+)
+
+results_df["Actual Label"] = (
+    results_df["Actual"]
+    .map(LABEL_NAMES)
+)
+
+results_df["Predicted Label"] = (
+    results_df["Predicted"]
+    .map(LABEL_NAMES)
 )
 
 print(
-    f"The predictions differ from the actual "
-    f"effectiveness labels by an average of "
-    f"{mae:.4f} label levels."
-)
-
-
-print(
-    f"\nMSE Interpretation:"
-)
-
-print(
-    f"The average squared prediction error is "
-    f"{mse:.4f}."
-)
-
-
-print(
-    f"\nRMSE Interpretation:"
-)
-
-print(
-    f"The typical prediction error is "
-    f"{rmse:.4f} effectiveness-label levels."
-)
-
-
-print(
-    f"\nR² Interpretation:"
-)
-
-print(
-    f"The model explains approximately "
-    f"{r2 * 100:.2f}% of the variation "
-    f"in the numerical effectiveness labels."
+    results_df.head(20).to_string(
+        index=False
+    )
 )
 
 
 # ============================================================
-# CROSS VALIDATION
+# 21. CROSS-VALIDATION
 # ============================================================
 
-print("\n==============================")
-print("5-FOLD CROSS VALIDATION")
-print("==============================")
+print_section("20. CROSS-VALIDATION")
 
-
-cv = cross_val_score(
-    model,
-    X,
-    y,
-    cv=5,
-    scoring="accuracy",
+cv_scores = cross_val_score(
+    best_model,
+    X_train,
+    y_train,
+    cv=cv_strategy,
+    scoring="f1_weighted",
     n_jobs=-1
 )
 
+print("Cross-validation F1 scores:")
+
+for index, score in enumerate(
+    cv_scores,
+    start=1
+):
+
+    print(
+        f"Fold {index}: "
+        f"{score:.4f}"
+    )
+
+cv_mean = cv_scores.mean()
+cv_std = cv_scores.std()
 
 print(
-    "CV Scores:"
+    f"\nMean CV F1 Score: "
+    f"{cv_mean:.4f}"
 )
 
-print(cv)
-
-
-cv_mean = cv.mean()
-
-cv_std = cv.std()
-
-
 print(
-    f"\nCV Mean Accuracy: "
-    f"{cv_mean * 100:.2f}%"
-)
-
-
-print(
-    f"CV Std. Deviation: "
-    f"{cv_std * 100:.2f}%"
+    f"CV Standard Deviation: "
+    f"{cv_std:.4f}"
 )
 
 
 # ============================================================
-# LEARNING CURVE
+# 22. LEARNING CURVE
 # ============================================================
 
-print("\n==============================")
-print("LEARNING CURVE")
-print("==============================")
+print_section("21. LEARNING CURVE")
 
-
-sizes, train_scores, valid_scores = learning_curve(
-
-    model,
-
-    X,
-
-    y,
-
-    cv=5,
-
-    train_sizes=np.linspace(
-        0.1,
-        1.0,
-        10
-    ),
-
-    scoring="accuracy",
-
-    n_jobs=-1
+train_sizes, train_scores, validation_scores = (
+    learning_curve(
+        best_model,
+        X_train,
+        y_train,
+        cv=cv_strategy,
+        scoring="f1_weighted",
+        train_sizes=np.linspace(
+            0.1,
+            1.0,
+            5
+        ),
+        n_jobs=-1
+    )
 )
-
 
 train_mean = train_scores.mean(
     axis=1
 )
 
-valid_mean = valid_scores.mean(
+train_std = train_scores.std(
     axis=1
 )
 
+validation_mean = validation_scores.mean(
+    axis=1
+)
+
+validation_std = validation_scores.std(
+    axis=1
+)
 
 plt.figure(
-    figsize=(8, 5)
+    figsize=(9, 6)
 )
 
-
 plt.plot(
-    sizes,
+    train_sizes,
     train_mean,
     marker="o",
-    label="Training"
+    label="Training F1"
 )
-
 
 plt.plot(
-    sizes,
-    valid_mean,
+    train_sizes,
+    validation_mean,
     marker="o",
-    label="Validation"
+    label="Validation F1"
 )
 
+plt.fill_between(
+    train_sizes,
+    train_mean - train_std,
+    train_mean + train_std,
+    alpha=0.15
+)
+
+plt.fill_between(
+    train_sizes,
+    validation_mean - validation_std,
+    validation_mean + validation_std,
+    alpha=0.15
+)
 
 plt.xlabel(
-    "Training Samples"
+    "Number of Training Samples"
 )
 
 plt.ylabel(
-    "Accuracy"
+    "Weighted F1 Score"
 )
-
 
 plt.title(
     "Random Forest Learning Curve"
 )
 
-
-plt.grid(
-    True
-)
-
-
 plt.legend()
 
+plt.grid(
+    True,
+    alpha=0.3
+)
+
+plt.tight_layout()
 
 plt.savefig(
-    "learning_curve.png",
+    LEARNING_CURVE_FILE,
     dpi=300,
     bbox_inches="tight"
 )
 
-
 plt.close()
 
-
-# ============================================================
-# FEATURE IMPORTANCE
-# ============================================================
-
-print("\n==============================")
-print("FEATURE IMPORTANCE")
-print("==============================")
-
-
-feature_names = (
-    model
-    .named_steps[
-        "preprocessor"
-    ]
-    .get_feature_names_out()
+print(
+    f"Learning curve saved to: "
+    f"{LEARNING_CURVE_FILE}"
 )
 
 
-feature_importance = (
-    model
-    .named_steps[
-        "classifier"
-    ]
-    .feature_importances_
-)
+# ============================================================
+# 23. FEATURE IMPORTANCE
+# ============================================================
 
+print_section("22. FEATURE IMPORTANCE")
 
-fi = pd.DataFrame({
+rf_model = best_model.named_steps[
+    "classifier"
+]
 
-    "Feature":
-        feature_names,
+feature_importance = rf_model.feature_importances_
 
-    "Importance":
-        feature_importance
+feature_importance_df = pd.DataFrame({
+    "Feature": X.columns,
+    "Importance": feature_importance
 })
 
-
-fi = fi.sort_values(
-    by="Importance",
-    ascending=False
+feature_importance_df = (
+    feature_importance_df
+    .sort_values(
+        by="Importance",
+        ascending=False
+    )
+    .reset_index(drop=True)
 )
-
-
-print("\nTop 10 Most Important Features:")
 
 print(
-    fi.head(10)
+    feature_importance_df.to_string(
+        index=False
+    )
 )
 
 
-# Save feature importance
-fi.to_excel(
-    "feature_importance.xlsx",
+# ============================================================
+# 24. SAVE FEATURE IMPORTANCE
+# ============================================================
+
+feature_importance_df.to_excel(
+    FEATURE_IMPORTANCE_FILE,
     index=False
 )
 
+print(
+    f"\nFeature importance saved to: "
+    f"{FEATURE_IMPORTANCE_FILE}"
+)
+
 
 # ============================================================
-# METRICS EXPORT
+# 25. TRAINING METRICS TABLE
 # ============================================================
 
-print("\n==============================")
-print("EXPORTING METRICS")
-print("==============================")
+print_section("23. PREPARING METRICS EXPORT")
 
-
-metrics = pd.DataFrame({
-
+metrics_df = pd.DataFrame({
     "Metric": [
-
-        "Train Accuracy",
-
-        "Test Accuracy",
-
-        "Train-Test Gap",
-
-        "Cross Validation Accuracy",
-
+        "Accuracy",
         "Precision",
-
         "Recall",
-
-        "F1-Score",
-
-        "Specificity",
-
+        "F1 Score",
         "MAE",
-
         "MSE",
-
         "RMSE",
-
-        "R2"
-
+        "R²",
+        "Mean CV F1",
+        "CV Standard Deviation"
     ],
 
     "Value": [
-
-        train_acc,
-
-        test_acc,
-
-        overfit_gap,
-
-        cv_mean,
-
-        report[
-            "weighted avg"
-        ][
-            "precision"
-        ],
-
-        report[
-            "weighted avg"
-        ][
-            "recall"
-        ],
-
-        report[
-            "weighted avg"
-        ][
-            "f1-score"
-        ],
-
-        weighted_specificity,
-
+        accuracy,
+        precision,
+        recall,
+        f1,
         mae,
-
         mse,
-
         rmse,
-
-        r2
-
+        r2,
+        cv_mean,
+        cv_std
     ]
-
 })
 
-
-metrics.to_excel(
-    "training_metrics.xlsx",
-    index=False
-)
-
-
 print(
-    "Metrics saved to:"
-)
-
-print(
-    "training_metrics.xlsx"
+    metrics_df.to_string(
+        index=False
+    )
 )
 
 
 # ============================================================
-# SAVE MODEL
+# 26. EXPORT ACTUAL VS PREDICTED
 # ============================================================
 
-print("\n==============================")
-print("SAVING MODEL")
-print("==============================")
+with pd.ExcelWriter(
+    TRAINING_METRICS_FILE,
+    engine="openpyxl"
+) as writer:
 
+    metrics_df.to_excel(
+        writer,
+        sheet_name="Metrics",
+        index=False
+    )
+
+    results_df.to_excel(
+        writer,
+        sheet_name="Actual vs Predicted",
+        index=False
+    )
+
+    target_distribution_display.to_excel(
+        writer,
+        sheet_name="Original Class Balance",
+        index=False
+    )
+
+    smote_distribution.to_excel(
+        writer,
+        sheet_name="SMOTE Balance",
+        index=False
+    )
+
+    feature_importance_df.to_excel(
+        writer,
+        sheet_name="Feature Importance",
+        index=False
+    )
+
+print(
+    f"\nTraining metrics exported to: "
+    f"{TRAINING_METRICS_FILE}"
+)
+
+
+# ============================================================
+# 27. SAVE MODEL
+# ============================================================
+
+print_section("24. SAVING MODEL")
 
 joblib.dump(
-    model,
-    "random_forest_subsidy.pkl"
-)
-
-
-print(
-    "Model saved as:"
+    best_model,
+    MODEL_FILE
 )
 
 print(
-    "random_forest_subsidy.pkl"
+    f"Model saved successfully:"
+)
+
+print(
+    os.path.abspath(
+        MODEL_FILE
+    )
 )
 
 
 # ============================================================
-# GENERATED FILES
+# 28. FINAL SUMMARY
 # ============================================================
 
-print("\n==============================")
-print("TRAINING COMPLETE!")
-print("==============================")
-
-
-print("\nGenerated Files:")
+print_section("25. FINAL MODEL SUMMARY")
 
 print(
-    "- random_forest_subsidy.pkl"
+    "AgriSubsidy Effectiveness Prediction"
 )
 
 print(
-    "- confusion_matrix_test.png"
+    "Model: Random Forest Classifier"
 )
 
 print(
-    "- learning_curve.png"
+    "Balancing: SMOTE"
 )
 
 print(
-    "- feature_importance.xlsx"
+    f"Training Samples: {len(X_train)}"
 )
 
 print(
-    "- training_metrics.xlsx"
-)
-
-
-# ============================================================
-# FINAL SUMMARY
-# ============================================================
-
-print("\n==============================")
-print("FINAL MODEL SUMMARY")
-print("==============================")
-
-
-print(
-    f"Training Accuracy : "
-    f"{train_acc * 100:.2f}%"
+    f"Testing Samples: {len(X_test)}"
 )
 
 print(
-    f"Testing Accuracy  : "
-    f"{test_acc * 100:.2f}%"
+    f"Features Used: {X.shape[1]}"
 )
 
 print(
-    f"CV Accuracy       : "
-    f"{cv_mean * 100:.2f}%"
+    f"Accuracy: {accuracy:.4f}"
 )
 
 print(
-    f"Specificity       : "
-    f"{weighted_specificity:.4f}"
+    f"Precision: {precision:.4f}"
 )
 
 print(
-    f"MAE               : "
-    f"{mae:.4f}"
+    f"Recall: {recall:.4f}"
 )
 
 print(
-    f"MSE               : "
-    f"{mse:.4f}"
+    f"F1 Score: {f1:.4f}"
 )
 
 print(
-    f"RMSE              : "
-    f"{rmse:.4f}"
+    f"MAE: {mae:.4f}"
 )
 
 print(
-    f"R²                : "
-    f"{r2:.4f}"
+    f"MSE: {mse:.4f}"
 )
+
+print(
+    f"RMSE: {rmse:.4f}"
+)
+
+print(
+    f"R²: {r2:.4f}"
+)
+
+print(
+    f"Mean CV F1: {cv_mean:.4f}"
+)
+
+print(
+    f"CV Std: {cv_std:.4f}"
+)
+
+print("\nFiles generated:")
+
+print(
+    f" - {MODEL_FILE}"
+)
+
+print(
+    f" - {CONFUSION_MATRIX_FILE}"
+)
+
+print(
+    f" - {LEARNING_CURVE_FILE}"
+)
+
+print(
+    f" - {FEATURE_IMPORTANCE_FILE}"
+)
+
+print(
+    f" - {TRAINING_METRICS_FILE}"
+)
+
+print_section("TRAINING COMPLETE")
