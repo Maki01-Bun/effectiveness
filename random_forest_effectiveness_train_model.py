@@ -240,10 +240,53 @@ print("All feature columns are numerical.")
 
 
 # ============================================================
-# 7. REMOVE CONSTANT FEATURES
+# 7. FEATURE CONSISTENCY CHECK
 # ============================================================
 
-print_section("7. CONSTANT FEATURE CHECK")
+print_section("7. FEATURE CONSISTENCY CHECK")
+
+# IMPORTANT:
+# Do NOT remove constant features here.
+#
+# Average Yield (bags/ha) is intentionally retained because it is
+# the baseline used to compare a farmer's Crop Yield (bags/ha)
+# and determine whether yield increased or decreased.
+#
+# The Random Forest model must be trained with the same feature
+# columns that FastAPI sends during prediction.
+
+REQUIRED_FEATURES = [
+    "Average Yield (bags/ha)",
+    "Crop Yield (bags/ha)",
+]
+
+missing_required_features = [
+    column
+    for column in REQUIRED_FEATURES
+    if column not in X.columns
+]
+
+if missing_required_features:
+    raise ValueError(
+        "Required model features are missing from the dataset:\n"
+        + "\n".join(
+            f" - {column}"
+            for column in missing_required_features
+        )
+    )
+
+print("Required yield features found:")
+
+for column in REQUIRED_FEATURES:
+    print(f" - {column}")
+
+print("\nUnique values per feature:")
+
+for column in X.columns:
+    print(
+        f" - {column}: "
+        f"{X[column].nunique(dropna=False)} unique values"
+    )
 
 constant_columns = [
     column
@@ -252,25 +295,17 @@ constant_columns = [
 ]
 
 if constant_columns:
-
-    print("Constant features detected:")
+    print("\nWARNING: Constant features detected.")
+    print("They will NOT be removed because the feature set must")
+    print("remain consistent between training and FastAPI prediction.")
 
     for column in constant_columns:
         print(
             f" - {column}: "
             f"{X[column].iloc[0]}"
         )
-
-    X = X.drop(
-        columns=constant_columns
-    )
-
-    print("\nConstant features removed.")
-
 else:
-
-    print("No constant features detected.")
-
+    print("\nNo constant features detected.")
 
 print("\nFinal features used for training:")
 
@@ -278,6 +313,19 @@ for column in X.columns:
     print(f" - {column}")
 
 print(f"\nNumber of final features: {X.shape[1]}")
+
+# Save the exact feature order used by the trained model.
+# FastAPI can use this metadata to prevent feature-name mismatches.
+FEATURES_FILE = "model_features.pkl"
+
+joblib.dump(
+    X.columns.tolist(),
+    FEATURES_FILE
+)
+
+print(
+    f"\nModel feature list saved to: {FEATURES_FILE}"
+)
 
 
 # ============================================================
