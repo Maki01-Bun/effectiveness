@@ -122,9 +122,9 @@ def predict(data: PredictionInput):
 
         "Farm Size (ha)": data.farm_size,
 
-        "Average Yield (bags/ha)": data.average_yield,
+        "Average Yield (tons/ha)": data.average_yield,
 
-        "Crop Yield (bags/ha)": data.crop_yield_after,
+        "Crop Yield (tons)": data.crop_yield_after,
 
         "Average Selling Price (₱/kg)": data.selling_price,
 
