@@ -96,9 +96,19 @@ REQUIRED_FEATURES = [
     "Average Yield (tons/ha)",
     "Crop Yield (tons)",
     "Average Selling Price (₱/kg)",
-    "Feedback Score",
-    "Subsidy Received"
+    "Subsidy Received",
+    "Q1",
+    "Q2",
+    "Q3",
+    "Q4",
+    "Q5",
+    "Q6",
+    "Q7",
+    "Q8",
+    "Q9",
+    "Q10"
 ]
+
 
 
 # ============================================================
@@ -307,14 +317,25 @@ The Effectiveness Label already exists in the dataset.
 
 The Random Forest does NOT manually calculate the label.
 
-The six columns below are the INPUTS:
+The fifteen columns below are the INPUTS:
 
 1. Farm Size
 2. Average Yield
 3. Crop Yield
 4. Average Selling Price
-5. Feedback Score
-6. Subsidy Received
+5. Subsidy Received
+6. Q1
+7. Q2
+8. Q3
+9. Q4
+10. Q5
+11. Q6
+12. Q7
+13. Q8
+14. Q9
+15. Q10
+
+Q1-Q10 are the individual survey ratings and replace the old Feedback Score.
 
 The Effectiveness Label is the TARGET that the model learns.
 """
@@ -351,17 +372,71 @@ label_summary = (
             "max"
         ],
 
-        "Feedback Score": [
+        "Subsidy Received": [
             "mean",
             "min",
             "max"
         ],
 
-        "Subsidy Received": [
+        "Q1": [
             "mean",
             "min",
             "max"
-        ]
+        ],
+
+        "Q2": [
+            "mean",
+            "min",
+            "max"
+        ],
+
+        "Q3": [
+            "mean",
+            "min",
+            "max"
+        ],
+
+        "Q4": [
+            "mean",
+            "min",
+            "max"
+        ],
+
+        "Q5": [
+            "mean",
+            "min",
+            "max"
+        ],
+
+        "Q6": [
+            "mean",
+            "min",
+            "max"
+        ],
+
+        "Q7": [
+            "mean",
+            "min",
+            "max"
+        ],
+
+        "Q8": [
+            "mean",
+            "min",
+            "max"
+        ],
+
+        "Q9": [
+            "mean",
+            "min",
+            "max"
+        ],
+
+        "Q10": [
+            "mean",
+            "min",
+            "max"
+        ],
 
     })
 
@@ -501,7 +576,6 @@ computation_columns = [
 
     "Average Selling Price (₱/kg)",
 
-    "Feedback Score",
 
     "Subsidy Received",
 
@@ -668,6 +742,26 @@ if non_numeric_columns:
 print(
     "All model features are numerical."
 )
+
+
+# Validate each survey question contains numeric rating values.
+QUESTION_COLUMNS = [f"Q{i}" for i in range(1, 11)]
+
+for question in QUESTION_COLUMNS:
+    if question not in df.columns:
+        raise ValueError(f"Required survey question column '{question}' was not found.")
+
+    if not pd.api.types.is_numeric_dtype(df[question]):
+        raise TypeError(
+            f"Survey question '{question}' must contain numerical rating values."
+        )
+
+    if not df[question].between(1, 5).all():
+        raise ValueError(
+            f"Survey question '{question}' must contain ratings from 1 to 5."
+        )
+
+print("Q1-Q10 survey ratings validated: numeric values from 1 to 5.")
 
 
 # ============================================================
